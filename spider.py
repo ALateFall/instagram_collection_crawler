@@ -6,12 +6,15 @@ import time
 from lxml import etree
 import json
 from urllib.parse import quote
+import random
+from fake_useragent import UserAgent
 
 
 
 class Spider():
 
     def __init__(self):
+
         self.url_login = 'https://www.instagram.com/accounts/login/?hl=en&source=auth_switcher'
         self.url_head = 'https://www.instagram.com/?hl=en'
         self.url_head_cn = 'https://www.instagram.com/?hl=zh-cn'
@@ -21,7 +24,8 @@ class Spider():
         self.nodes_ls = []
         self.shortcodes_ls = []
         self.username_ls = []
-        self.choose = 1
+        self.accounts = eval(open('accounts', 'r').read())  # 读取目录下的accounts文件，里面装有账号信息，是一个列表
+        self.choose = random.randint(0, 10)
 
         self.session = requests.Session()
 
@@ -60,9 +64,14 @@ class Spider():
                 pass
 
         # 填入账号密码并点击登录
-        driver.find_element_by_name('username').send_keys("network_spider_ltfall")
-        driver.find_element_by_name('password').send_keys('networkspider')
+        username = self.accounts[self.choose]['username']
+        password = self.accounts[self.choose]['password']
+        driver.find_element_by_name('username').send_keys(username)
+        driver.find_element_by_name('password').send_keys(password)
         driver.find_element_by_xpath('//button[@class="sqdOP  L3NKy   y3zKF     "]').click()
+        self.choose += 1
+        self.choose %= 11
+
 
         # 等待跳转
         time.sleep(5)
@@ -83,7 +92,10 @@ class Spider():
         print('正在使用cookies登录···')
 
         # 登录
-        self.session.get(self.url_head_cn, proxies=self.proxies, cookies=cookies)
+        ua = UserAgent()
+        user_agent = ua.random
+        self.headers['User-Agent'] = user_agent
+        self.session.get(self.url_head_cn, proxies=self.proxies, cookies=cookies, headers=self.headers)
 
         # 输出提示语句
         print('登录完成···')
@@ -166,7 +178,10 @@ class Spider():
             str_url = quote(str_url)
             url = self.url_json_noshortcode + str_url
             dic_temp = self.get_page_info(url)
-            print(dic_temp)
+            if dic_temp == {}:
+                pass
+            else:
+                print(dic_temp)
 
     # 和上面的get_all_info是连着的，每一步的动作
     def get_page_info(self, url):
@@ -174,7 +189,7 @@ class Spider():
         userinfo_dict = {}
 
         try:
-            # time.sleep(1)
+            time.sleep(1)
             response = self.session.get(url, proxies=self.proxies)
             ret = json.loads(response.text)
 
@@ -197,7 +212,7 @@ class Spider():
             pic_comment = ret['data']['shortcode_media']['edge_media_to_comment']['count']
             userinfo_dict['pic_comment'] = pic_comment
         except Exception as e:
-            traceback.print_exc()
+            # traceback.print_exc()
             print('速率过快，尝试重新登录···')
             self.session.close()
             cookie = self.get_cookies()
@@ -214,14 +229,14 @@ class Spider():
         self.login(cookie)
 
         # max = eval(input('请输入一个爬取的数字，爬取的总数将不小于这个数字。'))
-        time.sleep(1)
-        max = 200
+        # time.sleep(1)
+        max = 2000
         dic_temp = self.get_username_first()
         cursor_temp = self.process_dic(dic_temp)
         # print(cursor_temp)
 
         # 输出提示语句
-        print('开始爬取其余数据···')
+        print('开始得到nodes数据···')
 
         if len(self.shortcodes_ls) >= max:
             pass
@@ -232,6 +247,8 @@ class Spider():
                 # print(cursor_temp)
                 if len(self.shortcodes_ls) >= max:
                     break
+                else:
+                    print('当前已有' + str(len(self.shortcodes_ls)) + '个数据···')
 
         self.get_all_info()
 
