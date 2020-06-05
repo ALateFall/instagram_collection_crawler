@@ -8,7 +8,7 @@ import json
 from urllib.parse import quote
 import random
 from fake_useragent import UserAgent
-
+from requests.cookies import cookiejar_from_dict
 
 
 class Spider():
@@ -19,13 +19,14 @@ class Spider():
         self.url_head = 'https://www.instagram.com/?hl=en'
         self.url_head_cn = 'https://www.instagram.com/?hl=zh-cn'
         self.url_tag = 'https://www.instagram.com/explore/tags/networksecurity/'
+        self.url_nouser = 'https://www.instagram.com/'
         self.url_json_ls_nocursor = 'https://www.instagram.com/graphql/query/?query_hash=7dabc71d3e758b1ec19ffb85639e427b&variables='
         self.url_json_noshortcode = 'https://www.instagram.com/graphql/query/?query_hash=55a3c4bad29e4e20c20ff4cdfd80f5b4&variables='
         self.nodes_ls = []
         self.shortcodes_ls = []
         self.username_ls = []
         self.accounts = eval(open('accounts', 'r').read())  # 读取目录下的accounts文件，里面装有账号信息，是一个列表
-        self.choose = random.randint(0, 10)
+        self.choose = random.randint(0, 9)
 
         self.session = requests.Session()
 
@@ -38,11 +39,19 @@ class Spider():
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/81.0.4044.138 Safari/537.36',
         }
 
+    # TODO：
+    # 接口，info_dict的为一个字典，里面含有：
+    # （a）个人基本信息：用户名、用户简介、发帖数、关注数、被关注数；
+    # （b）发布的图片信息：图片文件、发布时间、点赞数、评论数；
+    # 调用方式：{'pic_url': '', 'pic_time': '', 'pic_like': , 'pic_comment': , 'user_name': '', 'user_introduction': '', 'user_post': , 'user_followed_by': , 'user_follow': }
+    def link(self, info_dict):
+        print(info_dict)  # 默认打印
+
     # 使用selenium+webdriver自动化登录，并返回cookie的值给requests进行模拟登录
     def get_cookies(self):
 
         # 输出提示语句
-        print('正在得到cookies，请稍等···')
+        print('正在得到cookies，请稍等15秒···')
 
 
         # 设置chrome为无头模式
@@ -70,11 +79,11 @@ class Spider():
         driver.find_element_by_name('password').send_keys(password)
         driver.find_element_by_xpath('//button[@class="sqdOP  L3NKy   y3zKF     "]').click()
         self.choose += 1
-        self.choose %= 11
+        self.choose %= 10
 
 
         # 等待跳转
-        time.sleep(5)
+        time.sleep(10)
 
         # 返回cookie的值
         cookies = driver.get_cookies()
@@ -95,8 +104,8 @@ class Spider():
         ua = UserAgent()
         user_agent = ua.random
         self.headers['User-Agent'] = user_agent
-        self.session.get(self.url_head_cn, proxies=self.proxies, cookies=cookies, headers=self.headers)
-
+        response = self.session.get(self.url_head_cn, proxies=self.proxies, cookies=cookies, headers=self.headers)
+        self.session.cookies = cookiejar_from_dict(cookies)
         # 输出提示语句
         print('登录完成···')
 
@@ -154,8 +163,41 @@ class Spider():
         my_dic = {"cursor": cursor, "ls_user": ls_user}
         return my_dic
 
-    def get_user_info(self):
-        pass
+    # 进一步处理字典，将用户的用户简介、发帖数、关注数、被关注数加入字典
+    def get_userinfo(self, my_dic):
+
+        user_url = self.url_nouser + my_dic['user_name']
+        response = self.session.get(user_url, headers=self.headers, proxies=self.proxies)
+        # print(user_url)
+        html = etree.HTML(response.text)
+        text_result = html.xpath('//script[@type="text/javascript"]//text()')
+
+        ret = ""
+        for text in text_result:
+            if text.startswith('window._sharedData'):
+                ret = text
+                break
+        ret = ret.lstrip('window._sharedData = ')
+        ret = ret.rstrip(';')
+        ret = json.loads(ret)
+
+        # 得到用户简介
+        user_introduction = ret['entry_data']['ProfilePage'][0]['graphql']['user']['biography']
+        my_dic['user_introduction'] = user_introduction
+
+        # 得到用户发帖数
+        user_post = ret['entry_data']['ProfilePage'][0]['graphql']['user']['edge_owner_to_timeline_media']['count']
+        my_dic['user_post'] = user_post
+
+        # 得到用户被关注数
+        user_followed_by = ret['entry_data']['ProfilePage'][0]['graphql']['user']['edge_followed_by']['count']
+        my_dic['user_followed_by'] = user_followed_by
+
+        # 得到用户关注数
+        user_follow = ret['entry_data']['ProfilePage'][0]['graphql']['user']['edge_follow']['count']
+        my_dic['user_follow'] = user_follow
+
+        return my_dic
 
     # 处理字典信息，将用户的node信息赋值给类属性，返回cursor的值
     def process_dic(self, my_dic):
@@ -173,7 +215,12 @@ class Spider():
     # 进行帖子信息的抓取
     def get_all_info(self):
 
+        count = 0
+        count2 = 0
         for shortcode in self.shortcodes_ls:
+            # if count % 5 == 0:
+            #     time.sleep(1)
+            count += 1
             str_url = '{'+'"shortcode":"' + shortcode + '"}'
             str_url = quote(str_url)
             url = self.url_json_noshortcode + str_url
@@ -181,15 +228,19 @@ class Spider():
             if dic_temp == {}:
                 pass
             else:
-                print(dic_temp)
+                count2 += 1
+                info_dict = self.get_userinfo(dic_temp)
+                self.link(info_dict)
+                if count % 50 == 0:
+                    print('已有'+str(count2)+'个数据！')
 
     # 和上面的get_all_info是连着的，每一步的动作
     def get_page_info(self, url):
 
-        userinfo_dict = {}
+        page_dict = {}
 
         try:
-            time.sleep(1)
+            # time.sleep(1)
             response = self.session.get(url, proxies=self.proxies)
             ret = json.loads(response.text)
 
@@ -197,22 +248,27 @@ class Spider():
 
             # 图片的url
             pic_url = ret['data']['shortcode_media']['display_url']
-            userinfo_dict['pic_url'] = pic_url
+            page_dict['pic_url'] = pic_url
 
             # 图片的发布时间
             take_time = ret['data']['shortcode_media']['taken_at_timestamp']
             pic_time = time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(take_time))
-            userinfo_dict['pic_time'] = pic_time
+            page_dict['pic_time'] = pic_time
 
             # 图片的点赞数
             pic_like = ret['data']['shortcode_media']['edge_media_preview_like']['count']
-            userinfo_dict['pic_like'] = pic_like
+            page_dict['pic_like'] = pic_like
 
             # 图片的评论数
             pic_comment = ret['data']['shortcode_media']['edge_media_to_comment']['count']
-            userinfo_dict['pic_comment'] = pic_comment
-        except Exception as e:
-            # traceback.print_exc()
+            page_dict['pic_comment'] = pic_comment
+
+            # 发布图片的用户名
+            user_name = ret['data']['shortcode_media']['owner']['username']
+            page_dict['user_name'] = user_name
+
+        except KeyError as e:
+            traceback.print_exc()
             print('速率过快，尝试重新登录···')
             self.session.close()
             cookie = self.get_cookies()
@@ -221,16 +277,18 @@ class Spider():
             print('再次尝试')
             # print('the current url is: '+url)
 
-        return userinfo_dict
+        return page_dict
 
     def start(self):
 
         cookie = self.get_cookies()
         self.login(cookie)
 
+        response2 = self.session.get('https://www.instagram.com', cookies=cookie)
+
         # max = eval(input('请输入一个爬取的数字，爬取的总数将不小于这个数字。'))
         # time.sleep(1)
-        max = 2000
+        max = 1000
         dic_temp = self.get_username_first()
         cursor_temp = self.process_dic(dic_temp)
         # print(cursor_temp)
@@ -248,7 +306,7 @@ class Spider():
                 if len(self.shortcodes_ls) >= max:
                     break
                 else:
-                    print('当前已有' + str(len(self.shortcodes_ls)) + '个数据···')
+                    print('当前已得到' + str(len(self.shortcodes_ls)) + '个url···')
 
         self.get_all_info()
 
